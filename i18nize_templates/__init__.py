@@ -1402,7 +1402,7 @@ def get_parser_for_file(html_file, assume_handlebars=False,
     return parser
 
 
-def main(argv):
+def main(argv=sys.argv):
     arg_parser = argparse.ArgumentParser(
         description=('Auto-add _("...") to jinja2 and handlebars html files'
                      ' (modifying them in place).'))

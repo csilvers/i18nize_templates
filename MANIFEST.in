@@ -1,0 +1,4 @@
+include i18nize-templates
+include LICENSE README.md
+recursive-include i18nize_templates *
+recursive-include tests *

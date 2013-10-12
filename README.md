@@ -24,11 +24,11 @@ This script helps with that process.
 Use
 ---
 
-    i18nize_templates.py <file> ...
+    i18nize-templates <file> ...
 
 OR
 
-    i18nize_templates.py [--handlebars] < <infile> > <outfile>
+    i18nize-templates [--handlebars] < <infile> > <outfile>
 
 In the first use-case, the files are modified in-place.  In the second
 use-case, infile is assumed to be a jinja2 template unless
