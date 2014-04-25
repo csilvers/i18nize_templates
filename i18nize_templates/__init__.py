@@ -270,7 +270,18 @@ _OK_FUNCTIONS = [
     'youtube.player_embed',
     'log.date.strftime',
     ]
-    
+
+
+# TODO(csilvers): add an API for this.
+# TODO(csilvers): use this for all nltext, not just function arguments.
+_OK_FUNCTION_ARGUMENTS_RE = [
+    # We don't try to translate a function argument matching any of
+    # these regexps.  Do not include the surrounding quotes.
+    # These regexps must cover the entire variable name.
+    r'https?://.*',
+    r'([0-9]+px *)*',
+    ]
+
 
 # --- customization API calls
 
@@ -345,7 +356,7 @@ def mark_function_args_lack_nltext(fn_name):
     above, i18nize_templates has to assume that these strings are
     natural-language text, and it marks them for translation.  If
     they are not natural language text, you can use
-       {{ my_function(i18n_do_not_translate("arg1"), ...) }}    
+       {{ my_function(i18n_do_not_translate("arg1"), ...) }}
     but easier is to call mark_function_args_lack_nltext("my_function").
 
     Arguments:
@@ -481,9 +492,9 @@ class HtmlLexer(markupbase.ParserBase):
 
     ATTR_AND_VALUE = re.compile(
         r'(?P<attr>%(attr)s)\s*=\s*'
-        r"(?:'(?P<lita>(?:[^'])*)'"    # LITA
-        r'|"(?P<lit>(?:[^"])*)"'       # LIT
-        r'|(?P<bare>(?:[^\'\">\s])+)'  # bare value
+        r"(?:'(?P<lita>(?:[^\'])*)'"    # LITA
+        r'|"(?P<lit>(?:[^\"])*)"'       # LIT
+        r'|(?P<bare>(?:[^\'\">\s])+)'   # bare value
         r')(?:\s+|(?=>|/>))'   # end
         % {'attr': _ATTR_NAME}, re.DOTALL)
 
@@ -788,9 +799,9 @@ class Jinja2HtmlLexer(HtmlLexer):
     # variable}}, or a {%jinja2 block%}.
     ATTR_AND_VALUE = re.compile(
         r'(?P<attr>%(attr)s)\s*=\s*'
-        r"(?:'(?P<lita>(?:%(j2v)s|%(j2b)s|[^'])*)'"    # LITA
-        r'|"(?P<lit>(?:%(j2v)s|%(j2b)s|[^"])*)"'       # LIT
-        r'|(?P<bare>(?:%(j2v)s|%(j2b)s|[^\'\">\s])+)'  # bare value
+        r"(?:'(?P<lita>(?:%(j2v)s|%(j2b)s|[^\'])*)'"    # LITA
+        r'|"(?P<lit>(?:%(j2v)s|%(j2b)s|[^\"])*)"'       # LIT
+        r'|(?P<bare>(?:%(j2v)s|%(j2b)s|[^\'\">\s])+)'   # bare value
         r')(?:\s+|(?=>|/>|%(j2b)s))'           # end
         % {'attr': HtmlLexer._ATTR_NAME,
            'j2v': _J2_VAR, 'j2b': _J2_BALANCED_BLOCK},
@@ -869,9 +880,9 @@ class HandlebarsHtmlLexer(HtmlLexer):
 
     ATTR_AND_VALUE = re.compile(
         r'(?P<attr>%(attr)s)\s*=\s*'
-        r"(?:'(?P<lita>(?:%(hbv)s|%(hbb1)s|[^'])*)'"    # LITA
-        r'|"(?P<lit>(?:%(hbv)s|%(hbb2)s|[^"])*)"'       # LIT
-        r'|(?P<bare>(?:%(hbv)s|%(hbb3)s|[^\'\">\s])+)'  # bare value
+        r"(?:'(?P<lita>(?:%(hbv)s|%(hbb1)s|[^\'])*)'"    # LITA
+        r'|"(?P<lit>(?:%(hbv)s|%(hbb2)s|[^\"])*)"'       # LIT
+        r'|(?P<bare>(?:%(hbv)s|%(hbb3)s|[^\'\">\s])+)'   # bare value
         r')(?:\s+|(?=>|/>|%(hbb4)s))'           # end
         % {'attr': HtmlLexer._ATTR_NAME, 'hbv': _HBARS_VAR,
            'hbb1': _HBARS_BALANCED_BLOCK(1), 'hbb2': _HBARS_BALANCED_BLOCK(2),
@@ -973,6 +984,13 @@ class NullTextHandler(object):
         return (self.is_entity(segment) or
                 self.NO_NATURAL_LANGUAGE.match(segment))
 
+    def already_translated(self, segment):
+        """Return true if a text-segment s is already marked for translation.
+
+        For instance, if segment looks like '{{ _("foo") }}'.
+        """
+        return False      # there is no translation for NullTextHandler
+
     def add_underscore(self, s):
         return s
 
@@ -1059,7 +1077,8 @@ class NullTextHandler(object):
         # non-natural-language jinja2 functions, or non-text (only
         # whitespace, say), then we can emit it verbatim.
         for segment in text_segments:
-            if not self.no_natural_language(segment):
+            if (not self.no_natural_language(segment) and
+                not self.already_translated(segment)):
                 break
         else:   # if/else
             # If we get here, then all the segments are non-nl segments.
@@ -1252,6 +1271,17 @@ class Jinja2TextHandler(NullTextHandler):
     J2_VAR_NO_NATURAL_LANGUAGE = re.compile(
         J2_VAR_NO_NATURAL_LANGUAGE_STRING % '|'.join(_OK_FUNCTIONS))
 
+    # TODO(csilvers): incorporate this into no_natural_language
+    J2_FN_ARG_NO_NATURAL_LANGUAGE = re.compile(
+        '"(%s|[^a-zA-Z]*)"' % '|'.join(_OK_FUNCTION_ARGUMENTS_RE))
+
+    # Can use this when you know that the segment you're looking at is
+    # a function (e.g. '{{ fn("foo", "bar") }}'.  All escaped quotes
+    # ("foo \"bar\"") must have been removed first.  It finds
+    # arguments that are already translated.
+    J2_TRANSLATED_FUNCTION_ARGUMENT = re.compile(
+        r'\b(_|ngettext|i18n_do_not_translate)\(("[^"]*"|[^)])*\)')
+
     def is_entity(self, segment):
         """Return true if segment is an <html tag>, not a string of text."""
         return (super(Jinja2TextHandler, self).is_entity(segment) or
@@ -1264,6 +1294,41 @@ class Jinja2TextHandler(NullTextHandler):
         return (html_handler.is_entity(segment) or
                 html_handler.NO_NATURAL_LANGUAGE.match(segment) or
                 self.J2_VAR_NO_NATURAL_LANGUAGE.match(segment))
+
+    def _has_untranslated_function_argument(self, segment):
+        """Return true if some argument to the fn is segment is untranslated.
+
+        e.g., if segment is '{{ fn("foo") }}', returns True.  But if
+        segment is '{{ fn(_("foo"), i18n_do_not_translate("bar")) }}',
+        returns False.
+        """
+        # Remove escaped quotes, and quotes inside translation
+        # functions, and function args that don't need to be
+        # translated.
+        segment = segment.replace('\\\\', '')    # remove escaped \'s first
+        segment = segment.replace('\\"', '')
+        segment = self.J2_TRANSLATED_FUNCTION_ARGUMENT.sub('', segment)
+        segment = self.J2_FN_ARG_NO_NATURAL_LANGUAGE.sub('', segment)
+        # What's left are untranslated quoted-arguments.
+        # TODO(csilvers): handle single-quotes for args a well as double.
+        return '"' in segment
+
+    def already_translated(self, segment):
+        m = self.J2_VAR.match(segment)
+        if not m:
+            return False
+
+        var = m.group(1).strip()
+        if var.startswith(('_(', 'ngettext(', 'i18n_do_not_translate(')):
+            return True
+
+        # var could still be already translated if it's a function and
+        # all the arguments are translated.  We check by saying that
+        # everything in quotes is surrounded by some i18n-ing function.
+        if not self._has_untranslated_function_argument(segment):
+            return True
+
+        return False
 
     def add_underscore(self, s):
         """Add _("...") around s, handling jinja2 variables correctly.
@@ -1302,14 +1367,14 @@ class Jinja2TextHandler(NullTextHandler):
             # Normalize varname so it's a legal python variable name.
             varname = re.sub('\W', '_', varname.strip())
 
-            if (' _("' in var or '(_("' in var or var.startswith('_("') or
-                'ngettext(' in var or 'i18n_do_not_translate(' in var):
+            if self.already_translated(var):
                 # It looks like this var has already been marked for i18n.
                 # Leave it alone.
                 return s
-            elif '"' in var:
-                # A function with string args, or a filter with string args.
-                # Either way, we'll need a human to i18n-ize the args.
+            elif self._has_untranslated_function_argument(var):
+                # A function with (untranslated) string args, or a
+                # filter with untranslated string args.  Either way,
+                # we'll need a human to i18n-ize the args.
                 return '_TODO(%s)' % original_s
             if vars.get(varname, var) != var:
                 # Hmm, same varname, but different filters or fn arguments.
@@ -1357,6 +1422,12 @@ class HandlebarsTextHandler(NullTextHandler):
         return (html_handler.is_entity(segment) or
                 html_handler.NO_NATURAL_LANGUAGE.match(segment) or
                 self.HANDLEBARS_VAR_NO_NATURAL_LANGUAGE.match(segment))
+
+    def already_translated(self, segment):
+        # It's impossible in handlebars language for a single segment
+        # to be already-translated.  Translation is indicated via a
+        # series of segments: {{#_}} + <something> + {{/_}}.
+        return False
 
     def add_underscore(self, s):
         """Add {{#_}}...{{/_}} around s."""

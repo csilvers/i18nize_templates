@@ -317,6 +317,32 @@ class Jinja2Test(unittest.TestCase):
         self.check('{{ i18n_do_not_translate("same in all languages") }}',
                    '{{ i18n_do_not_translate("same in all languages") }}')
 
+    def test_translation_in_function(self):
+        self.check('{{foo}} {{ fn(_("bar")) }} {{baz}}',
+                   '{{foo}} {{ fn(_("bar")) }} {{baz}}')
+        self.check('{{foo}} {{ fn(_("bar \\"tricky\\" ")) }} {{baz}}',
+                   '{{foo}} {{ fn(_("bar \\"tricky\\" ")) }} {{baz}}')
+        self.check('foo {{ fn(_("bar")) }} baz',
+                   '{{ _("foo %(fn)s baz", fn=fn(_("bar"))) }}')
+
+        self.check('{{foo}} {{ fn(i18n_do_not_translate("bar")) }} {{baz}}',
+                   '{{foo}} {{ fn(i18n_do_not_translate("bar")) }} {{baz}}')
+        self.check('{{foo}} {{ fn(ngettext("bar", "bar2", 3)) }} {{baz}}',
+                   '{{foo}} {{ fn(ngettext("bar", "bar2", 3)) }} {{baz}}')
+
+    def test_lack_of_translation_in_function(self):
+        self.check('{{foo}} {{ fn(_("bar1"), "bar2", _("bar3")) }} {{baz}}',
+                   '_TODO({{foo}} {{ fn(_("bar1"), "bar2", _("bar3")) }} '
+                   '{{baz}})')
+        self.check('foo {{ fn(_("bar1"), "bar2", _("bar3")) }} baz',
+                   '_TODO(foo {{ fn(_("bar1"), "bar2", _("bar3")) }} baz)')
+
+    def test_fn_arg_does_not_need_to_be_translated(self):
+        self.check('{{foo}} {{ fn("32px", "http://example.com") }} {{baz}}',
+                   '{{foo}} {{ fn("32px", "http://example.com") }} {{baz}}')
+        self.check('{{foo}} {{ fn("32px", _("bar")) }} {{baz}}',
+                   '{{foo}} {{ fn("32px", _("bar")) }} {{baz}}')
+
 
 class HandlebarsTest(unittest.TestCase):
     def check(self, input, expected):
@@ -469,7 +495,7 @@ class CustomizationTest(unittest.TestCase):
             i18nize_templates.NATURAL_LANGUAGE_TAG_ATTRIBUTES[:])
 
         i18nize_templates._NL_ATTR_MAP = None
-        
+
         self.old_NLSCRE = (
             i18nize_templates.NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE_STRING)
         i18nize_templates.NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE_STRING = (
