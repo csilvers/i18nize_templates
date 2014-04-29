@@ -11,7 +11,35 @@ sys.path.insert(1, '.')
 import i18nize_templates
 
 
-class HtmlTest(unittest.TestCase):
+class TestBase(unittest.TestCase):
+    def setUp(self):
+        i18nize_templates._init()     # reset customizable state
+
+        # TODO(csilvers): move this functionality to _init()
+        self.old_NLTA = i18nize_templates.NATURAL_LANGUAGE_TAG_ATTRIBUTES
+        i18nize_templates.NATURAL_LANGUAGE_TAG_ATTRIBUTES = (
+            i18nize_templates.NATURAL_LANGUAGE_TAG_ATTRIBUTES[:])
+
+        i18nize_templates._NL_ATTR_MAP = None
+
+        self.old_NLSCRE = (
+            i18nize_templates.NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE_STRING)
+        i18nize_templates.NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE_STRING = (
+            i18nize_templates.NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE_STRING[:])
+
+        self.old_NLSCR = (
+            i18nize_templates._NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE)
+
+    def tearDown(self):
+        i18nize_templates.NATURAL_LANGUAGE_TAG_ATTRIBUTES = self.old_NLTA
+        i18nize_templates._NL_ATTR_MAP = None
+        i18nize_templates.NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE_STRING = (
+            self.old_NLSCRE)
+        i18nize_templates._NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE = (
+            self.old_NLSCR)
+
+
+class HtmlTest(TestBase):
     """Test some simple html parsing."""
     def check(self, input):
         text_handler = i18nize_templates.NullTextHandler
@@ -36,7 +64,7 @@ class HtmlTest(unittest.TestCase):
             self.assertEqual("test, at line 1, column 1", "%s" % e)
 
 
-class Jinja2Test(unittest.TestCase):
+class Jinja2Test(TestBase):
     def check(self, input, expected):
         text_handler = i18nize_templates.Jinja2TextHandler
         tag_parser = i18nize_templates.Jinja2HtmlLexer(
@@ -301,9 +329,9 @@ class Jinja2Test(unittest.TestCase):
 
     def test_quote_in_functions_gives_todo(self):
         self.check('This {{ fn("hello") }} has quotes!',
-                   '_TODO(This {{ fn("hello") }} has quotes!)')
+                   '{{ _("This %(fn)s has quotes!", fn=fn(_TODO("hello"))) }}')
         self.check('{{ fn("hello") }}',
-                   '_TODO({{ fn("hello") }})')
+                   '{{ fn(_TODO("hello")) }}')
 
     def test_empty_quote_does_not_give_todo(self):
         self.check('{{ fn("") }}',
@@ -311,13 +339,16 @@ class Jinja2Test(unittest.TestCase):
         self.check('{{ fn(variable or "") }}',
                    '{{ fn(variable or "") }}')
         self.check('{{ fn("", "arg") }}',
-                   '_TODO({{ fn("", "arg") }})')
+                   '{{ fn("", _TODO("arg")) }}')
+
+    def test_function(self):
+        self.check('{{ fn("bar") }}',
+                   '{{ fn(_TODO("bar")) }}')
 
     def test_do_not_translate_function(self):
         self.check('{{ i18n_do_not_translate("same in all languages") }}',
                    '{{ i18n_do_not_translate("same in all languages") }}')
 
-    def test_translation_in_function(self):
         self.check('{{foo}} {{ fn(_("bar")) }} {{baz}}',
                    '{{foo}} {{ fn(_("bar")) }} {{baz}}')
         self.check('{{foo}} {{ fn(_("bar \\"tricky\\" ")) }} {{baz}}',
@@ -332,10 +363,11 @@ class Jinja2Test(unittest.TestCase):
 
     def test_lack_of_translation_in_function(self):
         self.check('{{foo}} {{ fn(_("bar1"), "bar2", _("bar3")) }} {{baz}}',
-                   '_TODO({{foo}} {{ fn(_("bar1"), "bar2", _("bar3")) }} '
-                   '{{baz}})')
+                   '{{foo}} {{ fn(_("bar1"), _TODO("bar2"), _("bar3")) }} '
+                   '{{baz}}')
         self.check('foo {{ fn(_("bar1"), "bar2", _("bar3")) }} baz',
-                   '_TODO(foo {{ fn(_("bar1"), "bar2", _("bar3")) }} baz)')
+                   '{{ _("foo %(fn)s baz", '
+                   'fn=fn(_("bar1"), _TODO("bar2"), _("bar3"))) }}')
 
     def test_fn_arg_does_not_need_to_be_translated(self):
         self.check('{{foo}} {{ fn("32px", "http://example.com") }} {{baz}}',
@@ -343,8 +375,33 @@ class Jinja2Test(unittest.TestCase):
         self.check('{{foo}} {{ fn("32px", _("bar")) }} {{baz}}',
                    '{{foo}} {{ fn("32px", _("bar")) }} {{baz}}')
 
+    def test_nested_function_args(self):
+        self.check('He said {{ foo(bar("baz")) }}',
+                   '{{ _("He said %(foo)s", foo=foo(bar(_TODO("baz")))) }}')
+        self.check('He said {{ foo("bar" + baz("bang")) }}',
+                   '{{ _("He said %(foo)s", '
+                   'foo=foo(_TODO("bar") + baz(_TODO("bang")))) }}')
+        self.check('He said {{ foo("bar") + baz("bang") }}',
+                   '{{ _("He said %(foo)s", '
+                   'foo=foo(_TODO("bar")) + baz(_TODO("bang"))) }}')
 
-class HandlebarsTest(unittest.TestCase):
+    def test_single_quotes_in_fn(self):
+        self.check("{{ fn('bar') }}",
+                   "{{ fn(_TODO('bar')) }}")
+        self.check('He said {{ foo(\'bar\') + baz("bang") }}',
+                   '{{ _("He said %(foo)s", '
+                   'foo=foo(_TODO(\'bar\')) + baz(_TODO("bang"))) }}')
+
+    def test_quotes_in_var_but_outside_fn(self):
+        self.check("{{ 'Hello' + bar + '!' }}",
+                   "{{ _('Hello') + bar + '!' }}")
+
+    def test_ok_function(self):
+        self.check("{{ urlize('foo') + not_ok('bar') + 'baz' }}",
+                   "{{ urlize('foo') + not_ok(_TODO('bar')) + _('baz') }}")
+
+
+class HandlebarsTest(TestBase):
     def check(self, input, expected):
         text_handler = i18nize_templates.HandlebarsTextHandler
         tag_parser = i18nize_templates.HandlebarsHtmlLexer(
@@ -488,39 +545,15 @@ class HandlebarsTest(unittest.TestCase):
                    'languages{{/i18nDoNotTranslate}}')
 
 
-class CustomizationTest(unittest.TestCase):
+class CustomizationTest(TestBase):
     def setUp(self):
-        self.old_NLTA = i18nize_templates.NATURAL_LANGUAGE_TAG_ATTRIBUTES
-        i18nize_templates.NATURAL_LANGUAGE_TAG_ATTRIBUTES = (
-            i18nize_templates.NATURAL_LANGUAGE_TAG_ATTRIBUTES[:])
-
-        i18nize_templates._NL_ATTR_MAP = None
-
-        self.old_NLSCRE = (
-            i18nize_templates.NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE_STRING)
-        i18nize_templates.NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE_STRING = (
-            i18nize_templates.NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE_STRING[:])
-
-        self.old_NLSCR = (
-            i18nize_templates._NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE)
-
-        self.old_OF = i18nize_templates._OK_FUNCTIONS
-        i18nize_templates._OK_FUNCTIONS = i18nize_templates._OK_FUNCTIONS[:]
+        super(CustomizationTest, self).setUp()
 
         text_handler = i18nize_templates.Jinja2TextHandler
         tag_parser = i18nize_templates.Jinja2HtmlLexer(
             text_handler(None).handle_segment)
         self.parser = i18nize_templates.Jinja2HtmlLexer(
             text_handler(tag_parser).handle_segment)
-
-    def tearDown(self):
-        i18nize_templates.NATURAL_LANGUAGE_TAG_ATTRIBUTES = self.old_NLTA
-        i18nize_templates._NL_ATTR_MAP = None
-        i18nize_templates.NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE_STRING = (
-            self.old_NLSCRE)
-        i18nize_templates._NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE = (
-            self.old_NLSCR)
-        i18nize_templates._OK_FUNCTIONS = self.old_OF
 
     def check(self, input, expected):
         # We check twice: once with the global parser, which was set
@@ -554,7 +587,7 @@ class CustomizationTest(unittest.TestCase):
                    '{{ _("foo") }}<p val="hello" why="not me">')
         self.check('foo<div val="hello" why="me">',
                    '{{ _("foo") }}<div val="hello" why="me">')
-        
+
     def test_add_nltext_separator_class(self):
         self.check('foo<br class="sepb">bar',
                    r'{{ _("foo<br class=\"sepb\">bar") }}')
@@ -567,14 +600,37 @@ class CustomizationTest(unittest.TestCase):
                    r'{{ _("foo<br class=\"sepz\">bar") }}')
 
     def test_mark_function_args_lack_nltext(self):
-        self.check('{{ myfn("arg") }}', '_TODO({{ myfn("arg") }})')
+        self.check('{{ myfn("arg") }}', '{{ myfn(_TODO("arg")) }}')
 
         i18nize_templates.mark_function_args_lack_nltext("myfn")
-        
+
         self.check('{{ myfn("arg") }}', '{{ myfn("arg") }}')
-        self.check('{{ foo_myfn("arg") }}', '_TODO({{ foo_myfn("arg") }})')
+        self.check('{{ foo_myfn("arg") }}', '{{ foo_myfn(_TODO("arg")) }}')
         # TODO(csilvers): this should pass too: \b isn't good enough.
-        self.todo('{{ foo.myfn("arg") }}', '_TODO({{ foo.myfn("arg") }})')
+        self.todo('{{ foo.myfn("arg") }}', '{{ foo.myfn(_TODO("arg")) }}')
+
+    def test_mark_function_args_lack_nltext_multiple_arguments(self):
+        self.check('{{ myfn("arg") }}', '{{ myfn(_TODO("arg")) }}')
+        i18nize_templates.mark_function_args_lack_nltext("foo", "myfn", "bar")
+        self.check('{{ myfn("arg") }}', '{{ myfn("arg") }}')
+
+    def test_mark_function_param_lacks_nltext(self):
+        self.check('{{ fn(myparam="arg") }}', '{{ fn(myparam=_TODO("arg")) }}')
+
+        i18nize_templates.mark_function_param_lacks_nltext("myparam")
+
+        self.check('{{ fn(myparam="arg") }}', '{{ fn(myparam="arg") }}')
+        self.check('{{ fn(bar_myparam="arg") }}',
+                   '{{ fn(bar_myparam=_TODO("arg")) }}')
+
+    def test_mark_function_arg_is_not_nltext(self):
+        self.check('{{ fn("arg") }}', '{{ fn(_TODO("arg")) }}')
+
+        i18nize_templates.mark_function_arg_is_not_nltext("ar[gG]")
+
+        self.check('{{ fn("arg") }}', '{{ fn("arg") }}')
+        self.check('{{ fn("argg") }}', '{{ fn(_TODO("argg")) }}')
+        self.check('{{ fn("barg") }}', '{{ fn(_TODO("barg")) }}')
 
 
 if __name__ == '__main__':

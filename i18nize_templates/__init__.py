@@ -69,6 +69,18 @@ strings for these arguments, it marks them for translation.  If you
 know that the function takes only arguments that do not need to be
 translated, you can call mark_function_args_lack_nltext() on it.
 
+*** mark_function_param_lacks_nltext("style")
+
+Similar to mark_function_args_lack_nltext, but you indicate a
+particular named function param.  This is useful for code like
+   {{ add_tag("some text", style="12pt") }}
+
+*** mark_function_arg_is_not_nltext("http://.*")
+
+Similar to mark_function_args_lack_nltext, but you indicate the
+value of an argument.  This is useful for code like
+   {{ add_tag("http://example.com") }}
+
 
 -- HOW IT WORKS:
 
@@ -235,52 +247,99 @@ _NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE = re.compile(
     '(^| )(%s)( |$)' % '|'.join(NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE_STRING))
 
 
-_OK_FUNCTIONS = [
-    # jinja2 functions/filters
-    'attr',
-    'dictsort',
-    'groupby',
-    'int',
-    'map',
-    'reject',
-    'rejectattr',
-    'select',
-    'selectattr',
-    'sort',
-    'striptags',
-    'sum',
-    'urlize',
-    # django functions/filters
-    'center',
-    'date',
-    'dictsortreversed',
-    'divisibleby',
-    'floatformat',
-    'get_digit',
-    'length_is',
-    'ljust',
-    'removetags',
-    'rjust',
-    'slice',
-    'stringformat',
-    'time',
-    # Khan-academy specific.  TODO(csilvers): move to KA-specific place.
-    'js_css_packages.package',
-    'handlebars_template',
-    'youtube.player_embed',
-    'log.date.strftime',
-    ]
+# --- Regexps for Jinja2 functions.
+# Jinja2 allows function calls: {{ foo("bar") }} and {{ myvar|foo("bar") }}.
+# We can't know whether text arguments ("bar") are natural language
+# text or not, so we have to mark them TODO, and then the user has to
+# say either {{ foo(_("bar")) }} or {{ foo(i18n_do_not_translate("bar")) }}.
+# The latter is ugly, so we allow you to say in code that some function
+# arguments are *not* natural language, and thus you can say
+# {{ foo("bar") }} without i18nize_templates trying to mark it up.
+#
+# _OK_FUNCTIONS: functions listed here have no natural language arguments.
+#    Example: {{ attr("foo", "bar") }} -- we say neither "foo" nor "bar"
+#    are natural language (as if you had put i18n_do_not_translate around
+#    them).
+#
+# _OK_FUNCTION_PARAMS: named function parameters listed here are not
+#    natural language.  Example: {{ myfun(style="12pt") }} -- we say
+#    that "12pt" is not natural language (as if you had put
+#    i18n_do_not_translate around it).
+#
+# _OK_FUNCTION_ARGUMENTS: function arguments that look like this are
+#    not natural language.  Example: {{ myfun("http://example.com") }}
+#    -- we say that "http://example.com" is not natural language
+#    (as if you had put i18n_do_not_translate around it).
+#
+# Each of these is a list of regexp-strings, and must match the
+# function-name, function-parameter, or function-argument exactly
+# (so no subset matching; put in .*'s if you need to).
+
+_OK_FUNCTIONS = []
+_OK_FUNCTIONS_RE = None     # set for real via the mark_* fn below.
+_OK_FUNCTION_PARAMS = []
+_OK_FUNCTION_PARAMS_RE = None
+_OK_FUNCTION_ARGUMENTS = []
+_OK_FUNCTION_ARGUMENTS_RE = None
 
 
-# TODO(csilvers): add an API for this.
-# TODO(csilvers): use this for all nltext, not just function arguments.
-_OK_FUNCTION_ARGUMENTS_RE = [
-    # We don't try to translate a function argument matching any of
-    # these regexps.  Do not include the surrounding quotes.
-    # These regexps must cover the entire variable name.
-    r'https?://.*',
-    r'([0-9]+px *)*',
-    ]
+def _init():
+    # This is in a function so we can reset all this state for tests.
+    # TODO(csilvers): add add_nltext_tag_attribute/etc here as well.
+    global _OK_FUNCTIONS, _OK_FUNCTION_PARAMS, _OK_FUNCTION_ARGUMENTS
+    _OK_FUNCTIONS = []
+    _OK_FUNCTION_PARAMS = []
+    _OK_FUNCTION_ARGUMENTS = []
+
+    mark_function_args_lack_nltext(
+        # jinja2 functions/filters
+        'attr',
+        'dictsort',
+        'groupby',
+        'int',
+        'map',
+        'reject',
+        'rejectattr',
+        'select',
+        'selectattr',
+        'sort',
+        'striptags',
+        'sum',
+        'urlize',
+        # django functions/filters
+        'center',
+        'date',
+        'dictsortreversed',
+        'divisibleby',
+        'floatformat',
+        'get_digit',
+        'length_is',
+        'ljust',
+        'removetags',
+        'rjust',
+        'slice',
+        'stringformat',
+        'time',
+        # functions/filters that indicate the args are already marked
+        '_',
+        'ngettext',
+        'i18n_do_not_translate',
+        # Khan-academy specific.  TODO(csilvers): move to KA-specific place.
+        'js_css_packages.package',
+        'handlebars_template',
+        'youtube.player_embed',
+        'log.date.strftime',
+        )
+
+    mark_function_param_lacks_nltext(
+        'style',
+        )
+
+    mark_function_arg_is_not_nltext(
+        r'[^a-zA-Z]*',     # TODO(csilvers): have a better not-alnum RE
+        r'https?://.*',
+        r'([0-9]+px *)*',
+        )
 
 
 # --- customization API calls
@@ -346,7 +405,7 @@ def add_nltext_separator_class(classname_re_string):
             NATURAL_LANGUAGE_SEPARATOR_CLASSES_RE_STRING))
 
 
-def mark_function_args_lack_nltext(fn_name):
+def mark_function_args_lack_nltext(*fn_names):
     """Indicate that a given function has non-nltext string arguments.
 
     For jinja2 (and possibly also for django), you can call built-in
@@ -360,14 +419,71 @@ def mark_function_args_lack_nltext(fn_name):
     but easier is to call mark_function_args_lack_nltext("my_function").
 
     Arguments:
-       fn_name: the name of the function to add to the whitelist.
+       *fn_names: names of functions to add to the whitelist.
+          Each name is actually a regex-string, which must match
+          the whole function-name.
     """
-    _OK_FUNCTIONS.append(fn_name)
-    # We need to recalculate the users of _OK_FUNCTIONS.
-    # TODO(csilvers): make less fragile.
-    Jinja2TextHandler.J2_VAR_NO_NATURAL_LANGUAGE = re.compile(
-        Jinja2TextHandler.J2_VAR_NO_NATURAL_LANGUAGE_STRING
-        % '|'.join(_OK_FUNCTIONS))
+    global _OK_FUNCTIONS_RE
+    _OK_FUNCTIONS.extend(fn_names)
+    _OK_FUNCTIONS_RE = re.compile(r'\b(%s)\s*$' % '|'.join(_OK_FUNCTIONS),
+                                  re.UNICODE)
+
+
+def mark_function_param_lacks_nltext(*param_names):
+    """Indicate that a given function parameter has a non-nltext value.
+
+    For jinja2 (and possibly also for django), you can call built-in
+    and user-defined functions from within the template, and those
+    functions can (like python) have named parameters:
+       {{ my_function(name="arg1", url="arg2") }}
+    By calling this function, you can say that no parameter named 'url',
+    in any function, has a natural-language argument.  (You *could*
+    just do
+       {{ my_function(..., url=i18n_do_not_translate("arg2")) }}
+    but easier is to call mark_function_param_lacks_nltext("url").
+
+    Arguments:
+       *param_names: names of parameters to add to the whitelist.
+          Each name is actually a regex-string, which must match
+          the whole parameter-name.
+    """
+    global _OK_FUNCTION_PARAMS_RE
+    _OK_FUNCTION_PARAMS.extend(param_names)
+    _OK_FUNCTION_PARAMS_RE = re.compile(r'\b(%s)\s*=\s*$'
+                                        % '|'.join(_OK_FUNCTION_PARAMS),
+                                        re.UNICODE)
+
+
+def mark_function_arg_is_not_nltext(*arg_texts):
+    """Indicate that a function argument of the given form in not nltext.
+
+    For jinja2 (and possibly also for django), you can call built-in
+    and user-defined functions from within the template, and those
+    functions can have string arguments.
+       {{ my_function("arg1", "http://arg2") }}
+    By calling this function, you can say that any string argument that
+    matches a particular regexp is definitely not a natural language
+    string.  (You *could*
+    just do
+       {{ my_function(..., i18n_do_not_translate("http://arg2")) }}
+    everywhere, but it's easier to call
+       mark_function_arg_is_not_nltext("http://.*")
+
+    Arguments:
+       *arg_texts: A regexp-string to add to the whitelist, which must
+          match the whole argument.  Any argument that matches ^arg_text$
+          will be automatically considered to not be natural-language.
+    """
+    global _OK_FUNCTION_ARGUMENTS_RE
+    _OK_FUNCTION_ARGUMENTS.extend(arg_texts)
+    _OK_FUNCTION_ARGUMENTS_RE = re.compile(
+        r'"(%(ok)s)"|\'(%(ok)s)\''
+        % {'ok': '|'.join(_OK_FUNCTION_ARGUMENTS)},
+        re.UNICODE)
+
+
+# Now that these functions are defined, we can call _init()!
+_init()
 
 # --- end customization API calls
 
@@ -968,14 +1084,15 @@ class NullTextHandler(object):
         """Return true if segment is an <html tag>, not a string of text."""
         return segment.startswith('<')
 
-    def no_natural_language(self, segment):
-        """Return true if a text-segment s has no natural-language text in it.
+    def no_natural_language_or_already_translated(self, segment):
+        """Return true if a text-segment has no nl-text needing translation.
 
         While s may have been deemed to be a 'natural language
         segment' by HtmlLexer, that doesn't mean it has any actual
         natural language text in it: it could be a run of whitespace
-        or whatever.  This checks whether it's actually a segment with
-        language in it.
+        or whatever.  Or it could already be marked for translation.
+        This checks whether it's actually a segment with language in
+        it.
 
         We say that html tags have no nl-text by default, and neither
         do text-segments with just punctuation or whitespace.  Subclasses
@@ -983,13 +1100,6 @@ class NullTextHandler(object):
         """
         return (self.is_entity(segment) or
                 self.NO_NATURAL_LANGUAGE.match(segment))
-
-    def already_translated(self, segment):
-        """Return true if a text-segment s is already marked for translation.
-
-        For instance, if segment looks like '{{ _("foo") }}'.
-        """
-        return False      # there is no translation for NullTextHandler
 
     def add_underscore(self, s):
         return s
@@ -1077,8 +1187,7 @@ class NullTextHandler(object):
         # non-natural-language jinja2 functions, or non-text (only
         # whitespace, say), then we can emit it verbatim.
         for segment in text_segments:
-            if (not self.no_natural_language(segment) and
-                not self.already_translated(segment)):
+            if not self.no_natural_language_or_already_translated(segment):
                 break
         else:   # if/else
             # If we get here, then all the segments are non-nl segments.
@@ -1266,69 +1375,105 @@ class Jinja2TextHandler(NullTextHandler):
     # not {{ other_function_calls("with quoted text") }}, which may
     # have natural-language function args.
     J2_VAR = re.compile(r'{{((?:}[^}]|[^}])*)}}')
-    J2_VAR_NO_NATURAL_LANGUAGE_STRING = (
-        r'{{(?:}[^}"]|[^}"]|\["|"\]|""|(?:\b(%s)\([^)]*\)))*}}')
-    J2_VAR_NO_NATURAL_LANGUAGE = re.compile(
-        J2_VAR_NO_NATURAL_LANGUAGE_STRING % '|'.join(_OK_FUNCTIONS))
-
-    # TODO(csilvers): incorporate this into no_natural_language
-    J2_FN_ARG_NO_NATURAL_LANGUAGE = re.compile(
-        '"(%s|[^a-zA-Z]*)"' % '|'.join(_OK_FUNCTION_ARGUMENTS_RE))
-
-    # Can use this when you know that the segment you're looking at is
-    # a function (e.g. '{{ fn("foo", "bar") }}'.  All escaped quotes
-    # ("foo \"bar\"") must have been removed first.  It finds
-    # arguments that are already translated.
-    J2_TRANSLATED_FUNCTION_ARGUMENT = re.compile(
-        r'\b(_|ngettext|i18n_do_not_translate)\(("[^"]*"|[^)])*\)')
+    J2_FUNCTION_ARG = re.compile(r'"([^"]|\\.)*"|'
+                                 r"'([^']|\\.)*'")
 
     def is_entity(self, segment):
         """Return true if segment is an <html tag>, not a string of text."""
         return (super(Jinja2TextHandler, self).is_entity(segment) or
                 segment.startswith('{{'))
 
-    def no_natural_language(self, segment):
+    def no_natural_language_or_already_translated(self, segment):
         html_handler = super(Jinja2TextHandler, self)
-        # We can't just call html_handler.no_natural_language() because
-        # it calls is_entity, which for us includes an unwanted test for '{{'.
-        return (html_handler.is_entity(segment) or
-                html_handler.NO_NATURAL_LANGUAGE.match(segment) or
-                self.J2_VAR_NO_NATURAL_LANGUAGE.match(segment))
+        # We can't just call html_handler.no_natural_language()
+        # because it calls our is_entity(), which includes an unwanted
+        # test for '{{'.
+        if (html_handler.is_entity(segment) or
+                html_handler.NO_NATURAL_LANGUAGE.match(segment)):
+            return True
 
-    def _has_untranslated_function_argument(self, segment):
-        """Return true if some argument to the fn is segment is untranslated.
-
-        e.g., if segment is '{{ fn("foo") }}', returns True.  But if
-        segment is '{{ fn(_("foo"), i18n_do_not_translate("bar")) }}',
-        returns False.
-        """
-        # Remove escaped quotes, and quotes inside translation
-        # functions, and function args that don't need to be
-        # translated.
-        segment = segment.replace('\\\\', '')    # remove escaped \'s first
-        segment = segment.replace('\\"', '')
-        segment = self.J2_TRANSLATED_FUNCTION_ARGUMENT.sub('', segment)
-        segment = self.J2_FN_ARG_NO_NATURAL_LANGUAGE.sub('', segment)
-        # What's left are untranslated quoted-arguments.
-        # TODO(csilvers): handle single-quotes for args a well as double.
-        return '"' in segment
-
-    def already_translated(self, segment):
+        # To check if we're already marked for translation, we'll do
+        # the simplest thing we can: the whole thing is surrounded by
+        # a translation function call.
         m = self.J2_VAR.match(segment)
         if not m:
             return False
 
+        # TODO(csilvers): this can still fail for something like:
+        # {{ _("foo") + "bar" }}
         var = m.group(1).strip()
         if var.startswith(('_(', 'ngettext(', 'i18n_do_not_translate(')):
             return True
 
-        # var could still be already translated if it's a function and
-        # all the arguments are translated.  We check by saying that
-        # everything in quotes is surrounded by some i18n-ing function.
-        if not self._has_untranslated_function_argument(segment):
-            return True
-
         return False
+
+    def _add_underscore_in_one_fn(self, s, i):
+        """s[i] is '(', we return (newtext, j) where j points past ')'."""
+        assert s[i] == '(', (s, i)
+        # We can be told that a string fn-argument -- e.g. in
+        # {{ myfunc(myparam="myval") }} -- in 3 ways:
+        #   1) myfunc is in _OK_FUNCTIONS_RE
+        #   2) myparam is in _OK_FUNCTION_PARAMS_RE
+        #   3) myval is in _OK_FUNCTION_ARGUMENTS_RE
+        already_translated = _OK_FUNCTIONS_RE.search(s[:i])
+        retval = '('
+        i += 1
+        while i < len(s):
+            if s[i] in ('"', "'"):
+                m = self.J2_FUNCTION_ARG.match(s[i:])
+                if (already_translated or
+                        _OK_FUNCTION_PARAMS_RE.search(s[:i]) or
+                        _OK_FUNCTION_ARGUMENTS_RE.match(m.group())):
+                    retval += s[i:(i + m.end())]
+                else:
+                    retval += '_TODO(%s)' % s[i:(i + m.end())]
+                i += m.end()
+            elif s[i] == '(':
+                # Function inside a function!  When will it ever end?!
+                (new_text, i) = self._add_underscore_in_one_fn(s, i)
+                retval += new_text
+            elif s[i] == ')':
+                retval += s[i]
+                i += 1
+                return (''.join(retval), i)
+            else:
+                retval += s[i]
+                i += 1
+        return retval
+
+    def _add_underscore_in_var(self, s):
+        """Given s, the contents inside {{...}}, return marked up s.
+
+        For instance, if s is 'foo', so the contents were {{foo}}, we
+        just return 'foo'.  But if s is 'foo("bar")', we return
+        foo(_("bar")).  If it's foo(_("bar")), we also return
+        foo(_("bar")).
+
+        Note we actually typically return foo(_TODO("bar")) since we
+        don't know if the proper markup is foo(_("bar")) or
+        foo(i18n_do_not_translate("bar")) -- that depends on whether
+        the function argument is a natural language string or not.
+        """
+        retval = ''
+        i = 0
+        while i < len(s):
+            m = self.J2_FUNCTION_ARG.match(s[i:])
+            if m:
+                # Quotes outside a function context: {{ "Hello" + bar }}
+                # Or maybe: {{ hello["bar"] }} -- check for that too.
+                if (s.endswith('[', 0, i) or
+                        _OK_FUNCTION_ARGUMENTS_RE.match(m.group())):
+                    retval += m.group()
+                else:
+                    retval += '_(%s)' % m.group()
+                i += m.end()
+            elif s[i] == '(':
+                (new_text, i) = self._add_underscore_in_one_fn(s, i)
+                retval += new_text
+            else:
+                retval += s[i]
+                i += 1
+        return retval
 
     def add_underscore(self, s):
         """Add _("...") around s, handling jinja2 variables correctly.
@@ -1339,6 +1484,31 @@ class Jinja2TextHandler(NullTextHandler):
            Have {{days}} nice days!
         to
            _("Have %(days) nice days!", days=days)
+
+        We also need to worry about arguments to functions and filters:
+
+        {{ some_fn("text") }}
+        {{ somevar.serialize("text") }}
+        {{ somevar|serialize("text") }}
+
+        It's possible the only natural-language text is inside
+        function arguments, in which case we want to just add
+        markup inside the function(s).  Otherwise, we need to
+        surround this whole string with _("..."), and have the
+        functions/etc be arguments, as above, possibly with
+        further _()'s inside them.
+
+            He said {{ foo("bar" + baz("bang")) }}
+
+        This should end up like:
+
+            _("He said %(foo)s", foo=foo(_TODO("bar") + baz(_TODO("bang"))))
+
+        Note we do not automatically put _() around function
+        arguments: we don't know if the strings being passed into
+        functions are natural language strings or not.  So we put
+        _TODO, which should be replaced by either _ or by
+        i18n_do_not_translate().
 
         Arguments:
             s: a text string
@@ -1354,6 +1524,20 @@ class Jinja2TextHandler(NullTextHandler):
         if not s:
             return ''     # no need to add an underscore to the empty string!
 
+        # First handle the case that the only natural-language text is
+        # inside the variables (as arguments to functions/filters.  In
+        # that case, we don't need put _() around everything, and can
+        # do the pretty '{{ fn(_("arg")) }}' rather than the ugly
+        # (though still correct) '{{ "%(fn)s", fn=fn(_("arg")) }}'.
+        no_var_s = self.J2_VAR.sub('', s)
+        if self.NO_NATURAL_LANGUAGE.match(no_var_s):
+            # Backwards so start- and end-pos aren't messed up as we modify s.
+            for m in reversed(list(self.J2_VAR.finditer(s))):
+                s = '%s{{%s}}%s' % (s[:m.start()],
+                                self._add_underscore_in_var(m.group(1)),
+                                s[m.end():])
+            return s
+
         original_s = s    # only used if we end up using a _TODO
 
         # Find the jinja2 variables.
@@ -1367,16 +1551,9 @@ class Jinja2TextHandler(NullTextHandler):
             # Normalize varname so it's a legal python variable name.
             varname = re.sub('\W', '_', varname.strip())
 
-            if self.already_translated(var):
-                # It looks like this var has already been marked for i18n.
-                # Leave it alone.
-                return s
-            elif self._has_untranslated_function_argument(var):
-                # A function with (untranslated) string args, or a
-                # filter with untranslated string args.  Either way,
-                # we'll need a human to i18n-ize the args.
-                return '_TODO(%s)' % original_s
-            if vars.get(varname, var) != var:
+            new_var = self._add_underscore_in_var(var)
+
+            if vars.get(varname, new_var) != new_var:
                 # Hmm, same varname, but different filters or fn arguments.
                 # Someone will have to figure out what's going on manually.
                 return '_TODO(%s)' % original_s
@@ -1392,7 +1569,7 @@ class Jinja2TextHandler(NullTextHandler):
                   s[m.end():pct_escape_until].replace('%', '%%'),
                   s[pct_escape_until:]))
             pct_escape_until = m.start()
-            vars[varname] = var
+            vars[varname] = new_var
 
         # Escape any remaining %'s we need to.  We only escape %'s if
         # the string has %(vars)s in it (just like normal python strings).
@@ -1415,19 +1592,13 @@ class HandlebarsTextHandler(NullTextHandler):
         return (super(HandlebarsTextHandler, self).is_entity(segment) or
                 segment.startswith('{{'))
 
-    def no_natural_language(self, segment):
+    def no_natural_language_or_already_translated(self, segment):
         html_handler = super(HandlebarsTextHandler, self)
         # We can't just call html_handler.no_natural_language() because
         # it calls is_entity, which for us includes an unwanted test for '{{'.
         return (html_handler.is_entity(segment) or
                 html_handler.NO_NATURAL_LANGUAGE.match(segment) or
                 self.HANDLEBARS_VAR_NO_NATURAL_LANGUAGE.match(segment))
-
-    def already_translated(self, segment):
-        # It's impossible in handlebars language for a single segment
-        # to be already-translated.  Translation is indicated via a
-        # series of segments: {{#_}} + <something> + {{/_}}.
-        return False
 
     def add_underscore(self, s):
         """Add {{#_}}...{{/_}} around s."""
