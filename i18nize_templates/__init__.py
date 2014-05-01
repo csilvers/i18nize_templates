@@ -330,6 +330,7 @@ def _init():
         'handlebars_template',
         'youtube.player_embed',
         'log.date.strftime',
+        'emails.tracking_image_url',
         )
 
     mark_function_param_lacks_nltext(
