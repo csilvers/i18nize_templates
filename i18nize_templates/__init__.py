@@ -300,6 +300,7 @@ def _init():
         'map',
         'reject',
         'rejectattr',
+        'round',
         'select',
         'selectattr',
         'sort',
