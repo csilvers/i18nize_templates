@@ -1101,8 +1101,8 @@ class NullTextHandler(object):
         return (self.is_entity(segment) or
                 self.NO_NATURAL_LANGUAGE.match(segment))
 
-    def add_underscore(self, s):
-        return s
+    def add_underscore(self, segments):
+        return ''.join(segments)
 
     def inside_tag(self):
         """If we don't have someone else to parse tags, then we're doing it."""
@@ -1155,12 +1155,12 @@ class NullTextHandler(object):
         """Adds _() and other appropriate i18n markup to text_segments.
 
         At its simplest, this routine could be just:
-           return self.add_underscore(''.join(text_segments))
+           return self.add_underscore(text_segments)
 
         But we complexify this routine to handle leading and trailing
         non-language elements.  For instance, if text_segments is
         ['   hi   '], we want to do
-           return '   ' + self.add_underscore('hi') + '   '
+           return '   ' + self.add_underscore(['hi']) + '   '
         so the translators don't have to translate whitespace.
         Likewise, if text_segments is ['<b>', 'hi', '</b>'].
 
@@ -1308,7 +1308,7 @@ class NullTextHandler(object):
                 i18n_segments.insert(0, prefix)
                 pre_segments[-1] = pre_segments[-1][:-1]
 
-        converted_text = self.add_underscore(''.join(i18n_segments))
+        converted_text = self.add_underscore(i18n_segments)
 
         # We want to i18nize natural-language text inside html tag
         # attributes (e.g. <img alt="hello">.)  Obviously, we don't
@@ -1475,7 +1475,7 @@ class Jinja2TextHandler(NullTextHandler):
                 i += 1
         return retval
 
-    def add_underscore(self, s):
+    def add_underscore(self, segments):
         """Add _("...") around s, handling jinja2 variables correctly.
 
         If s doesn't have any {{jinja2_vars}} in it, this function is
@@ -1511,76 +1511,98 @@ class Jinja2TextHandler(NullTextHandler):
         i18n_do_not_translate().
 
         Arguments:
-            s: a text string
+            segments: a list of text-strings, each of which is one
+               text segment (html tag, jinja2 variable, or plain
+               text).
 
         Return value:
             A string that looks like _("<s>") or
-            _("<a modification of s>", var=value, var=value)
+            _("<a modification of s>", var=value, var=value),
+            where s is all the input segments glommed together.
             In both cases, we backslash-escape double-quotes inside s.
 
             For constructs we can't handle yet, such as function calls,
-            we return _TODO(<s>); we do not escape quotes.
+            we return _TODO(<s>); we do not escape quotes in that case.
         """
-        if not s:
+        if not segments:
             return ''     # no need to add an underscore to the empty string!
 
+        retval = []
+
         # First handle the case that the only natural-language text is
-        # inside the variables (as arguments to functions/filters.  In
+        # inside the variables (as arguments to functions/filters).  In
         # that case, we don't need put _() around everything, and can
         # do the pretty '{{ fn(_("arg")) }}' rather than the ugly
         # (though still correct) '{{ "%(fn)s", fn=fn(_("arg")) }}'.
-        no_var_s = self.J2_VAR.sub('', s)
-        if self.NO_NATURAL_LANGUAGE.match(no_var_s):
-            # Backwards so start- and end-pos aren't messed up as we modify s.
-            for m in reversed(list(self.J2_VAR.finditer(s))):
-                s = '%s{{%s}}%s' % (s[:m.start()],
-                                self._add_underscore_in_var(m.group(1)),
-                                s[m.end():])
-            return s
+        for segment in segments:
+            if (not self.is_entity(segment) and
+                   not self.NO_NATURAL_LANGUAGE.match(segment)):
+                # Oops, we have 'normal' nltext, can't use the shortcut
+                break
+        else:      # for/else: if we get here we *can* use the shortcut!
+            for segment in segments:
+                m = self.J2_VAR.match(segment)
+                if m:
+                    retval.append('{{%s}}'
+                                  % self._add_underscore_in_var(m.group(1)))
+                else:
+                    retval.append(segment)
+            return ''.join(retval)
 
-        original_s = s    # only used if we end up using a _TODO
+        # Find the jinja2 variables.  Typically each segment will be a
+        # jinja2 variable or it won't, but for vars-within-tags
+        # (<b {{foo}}={{bar}}>), you can have multiple vars in a segment.
+        # We just break up the segments to avoid this.
+        new_segments = []
+        for segment in segments:
+            last_copy = 0
+            for m in self.J2_VAR.finditer(segment):
+                new_segments.append(segment[last_copy:m.start()])
+                new_segments.append(segment[m.start():m.end()])
+                last_copy = m.end()
+            new_segments.append(segment[last_copy:])
 
-        # Find the jinja2 variables.
         vars = {}   # map from python-name to jinja2 value
-        pct_escape_until = len(s)   # we want to escape %'s in the whole string
-        # Go backwards so start- and end-pos isn't messed up as we adjust s.
-        for m in reversed(list(self.J2_VAR.finditer(s))):
-            var = m.group(1).strip()   # include any filters or fn arguments
-            # Get the name of the variable or function (sans filter/fn args).
-            varname = re.split('[|(]', var, 1)[0]   # |==filter (==fn args
-            # Normalize varname so it's a legal python variable name.
-            varname = re.sub('\W', '_', varname.strip())
+        maybe_escape_percents_index = []
+        for segment in new_segments:
+            m = self.J2_VAR.search(segment)
+            if m:
+                var = m.group(1).strip()   # include any filters or fn args
+                # Get the name of the variable or function (sans fn args).
+                varname = re.split('[|(]', var, 1)[0]   # |==filter (==fn args
+                # Normalize varname so it's a legal python variable name.
+                varname = re.sub('\W', '_', varname.strip())
 
-            new_var = self._add_underscore_in_var(var)
+                new_var = self._add_underscore_in_var(var)
 
-            if vars.get(varname, new_var) != new_var:
-                # Hmm, same varname, but different filters or fn arguments.
-                # Someone will have to figure out what's going on manually.
-                return '_TODO(%s)' % original_s
+                vars.setdefault(varname, new_var)
+                if vars[varname] != new_var:
+                    # Hmm, same varname was seen before, but with
+                    # different filters or fn arguments.  Someone will
+                    # have to figure out what's going on manually.
+                    # TODO(csilvers): just modify varname ourselves.
+                    return '_TODO(%s)' % ''.join(segments)
 
-            # Replace this var with a python var: {{days}} -> %(days)s
-            # We also escape any %'s after this var, since they should be
-            # interpreted as literal percent-signs.  We wait until now
-            # because we know that nothing after us has jinja2-vars in it,
-            # and we don't want to double %'s inside of {{ jinja2_fn_calls }}.
-            s = ('%s%%(%s)s%s%s' %
-                 (s[:m.start()],
-                  varname,
-                  s[m.end():pct_escape_until].replace('%', '%%'),
-                  s[pct_escape_until:]))
-            pct_escape_until = m.start()
-            vars[varname] = new_var
+                # Replace this var with a python var: {{days}} -> %(days)s
+                retval.append('%%(%s)s' % varname)
+            else:
+                # Not part of a variable, we can leave it as-is,
+                # *except* we need to escape quotes, since we'll be
+                # inside a python string now.
+                retval.append(segment.replace('"', '\\"'))
+                # We also *may* need to escape percents.  Apparently
+                # jinja2 _ only requires us to escape percents when we
+                # have other arguments to _(), so we have to wait
+                # until after the loop to see if 'vars' ever gets set.
+                maybe_escape_percents_index.append(len(retval) - 1)
 
-        # Escape any remaining %'s we need to.  We only escape %'s if
-        # the string has %(vars)s in it (just like normal python strings).
         if vars:
-            s = s[:pct_escape_until].replace('%', '%%') + s[pct_escape_until:]
-
-        # Escape the double-quotes in s.
-        escaped_s = s.replace('"', '\\"')
+            # _() *does* have other arguments (from vars), so escape %'s.
+            for i in maybe_escape_percents_index:
+                retval[i] = retval[i].replace('%', '%%')
 
         arglist = [', %s=%s' % var_and_val for var_and_val in vars.iteritems()]
-        return '{{ _("%s"%s) }}' % (escaped_s, ''.join(arglist))
+        return '{{ _("%s"%s) }}' % (''.join(retval), ''.join(arglist))
 
 
 class HandlebarsTextHandler(NullTextHandler):
@@ -1600,11 +1622,11 @@ class HandlebarsTextHandler(NullTextHandler):
                 html_handler.NO_NATURAL_LANGUAGE.match(segment) or
                 self.HANDLEBARS_VAR_NO_NATURAL_LANGUAGE.match(segment))
 
-    def add_underscore(self, s):
+    def add_underscore(self, segments):
         """Add {{#_}}...{{/_}} around s."""
-        if not s:
+        if not segments:
             return ''     # no need to add an underscore to the empty string!
-        return '{{#_}}%s{{/_}}' % s
+        return '{{#_}}%s{{/_}}' % ''.join(segments)
 
 
 def i18nize(html_file, parser):

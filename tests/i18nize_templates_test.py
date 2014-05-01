@@ -139,6 +139,14 @@ class Jinja2Test(TestBase):
         self.check('{{  bold }}', '{{  bold }}')
         self.check('{{bold["ness"]}}', '{{bold["ness"]}}')
 
+    def test_only_jinja2_variable_and_html(self):
+        self.check('<span>{{bold}}</span>',
+                   '<span>{{bold}}</span>')
+        self.check('<span>{{bold}}</span><span>{{ness}}</span>',
+                   '<span>{{bold}}</span><span>{{ness}}</span>')
+        self.check('<span>{{bold}}</span> \n <span>{{ness}}</span>',
+                   '<span>{{bold}}</span> \n <span>{{ness}}</span>')
+
     def test_jinja2_comment(self):
         self.check('You are {# make bold #}bold',
                    '{{ _("You are") }} {# make bold #}{{ _("bold") }}')
@@ -168,6 +176,10 @@ class Jinja2Test(TestBase):
         self.check('You are <b id=a {{how_bold}} name=b>bold</b>',
                    '{{ _("You are <b id=a %(how_bold)s name=b>bold</b>",'
                    ' how_bold=how_bold) }}')
+
+        self.check('You are <b {{how_bold}} {{are_you}}>bold</b>',
+                   '{{ _("You are <b %(how_bold)s %(are_you)s>bold</b>",'
+                   ' how_bold=how_bold, are_you=are_you) }}')
 
     def test_jinja2_conditional_attr_in_tag(self):
         self.check('You are <b {%if bold%}very{%endif%}>bold</b>',
@@ -222,6 +234,10 @@ class Jinja2Test(TestBase):
                    '{{ _("You are 100%% %(name)s", name=name) }}')
         self.check('You are 100%',
                    '{{ _("You are 100%") }}')
+        # TODO(csilvers): I guess we have to extract out the {%if%} too?
+        self.todo('You are <b {%if bold%} very{%endif%}>100%</b> {{name}}',
+                  '{{ _("You are <b %(if)s>100%%</b> %(name)s", '
+                  'b={%if bold%}" very"{%else%}""{%endif%}, name=name) }}')
 
     def test_fake_script_tag(self):
         # A 'fake' script tag is one with type 'text/html'.
