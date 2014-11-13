@@ -561,7 +561,7 @@ class HtmlLexer(markupbase.ParserBase):
     """Find tags and other markup and call handler functions.
 
     Usage:
-        p = HtmlLexer()
+        p = HtmlLexer(callback)
         p.parse(data)
 
     This is similar to the standard library HTMLParser, but simpler
