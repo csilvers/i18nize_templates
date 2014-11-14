@@ -596,7 +596,7 @@ class HtmlLexer(markupbase.ParserBase):
     # mode, most tags are interpreted literally, and only the
     # </script> or </style> tag is 'interesting'.)
     INTERESTING_NORMAL = re.compile('<')
-    INTERESTING_CDATA = lambda cls, tag: re.compile(r'</\s*%s' % tag)
+    INTERESTING_CDATA = lambda cls, tag: re.compile(r'</\s*%s' % tag, re.I)
 
     TAGFIND = re.compile('[a-zA-Z][-.a-zA-Z0-9:_]*(?:\s+|(?=>|/>))')
     ENDTAGFIND = re.compile('</\s*([a-zA-Z][-.a-zA-Z0-9:_]*)\s*>')
@@ -885,7 +885,7 @@ class Jinja2HtmlLexer(HtmlLexer):
     """
     INTERESTING_NORMAL = re.compile('<|{{|{#|{%')
     # TODO(csilvers): make sure we ignore end </'s in {# jinja2 comments #}
-    INTERESTING_CDATA = lambda cls, tag: re.compile(r'</\s*%s' % tag)
+    INTERESTING_CDATA = lambda cls, tag: re.compile(r'</\s*%s' % tag, re.I)
 
     # Matches {{[not }}]*}}
     _J2_VAR = r'{{(?:}?[^}])*}}'
@@ -973,7 +973,7 @@ class HandlebarsHtmlLexer(HtmlLexer):
     """
     INTERESTING_NORMAL = re.compile('<|{{')
     # TODO(csilvers): make sure we ignore end </'s in {{! comments }}
-    INTERESTING_CDATA = lambda cls, tag: re.compile(r'</\s*%s' % tag)
+    INTERESTING_CDATA = lambda cls, tag: re.compile(r'</\s*%s' % tag, re.I)
 
     # Matches {{[not }}]*}}
     _HBARS_VAR = r'{{{?[^!#/>](?:}?[^}])*}?}}'

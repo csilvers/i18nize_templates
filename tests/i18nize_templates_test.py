@@ -39,6 +39,64 @@ class TestBase(unittest.TestCase):
             self.old_NLSCR)
 
 
+class SegmenterTest(TestBase):
+    """Test how we segment html."""
+    def check(self, input, expected):
+        def _save_segments(segment, segment_separates_nltext):
+            segments.append((segment, segment_separates_nltext))
+
+        # Even though we're only testing html functionality, we check
+        # on all three lexers since they sometimes copy logic.
+        parser = i18nize_templates.HtmlLexer(_save_segments)
+        segments = []
+        parser.parse(input)
+        self.assertEqual(expected, segments)
+
+        parser = i18nize_templates.Jinja2HtmlLexer(_save_segments)
+        segments = []
+        parser.parse(input)
+        self.assertEqual(expected, segments)
+
+        parser = i18nize_templates.HandlebarsHtmlLexer(_save_segments)
+        segments = []
+        parser.parse(input)
+        self.assertEqual(expected, segments)
+
+    def test_simple(self):
+        self.check('Hello <b>world</b>',
+                   [('Hello ', False),
+                    ('<b>', False),
+                    ('world', False),
+                    ('</b>', False),
+                    (None, True)])
+
+    def test_bold_inside_word(self):
+        self.check('Hello <b>w</b>world',
+                   [('Hello ', False),
+                    ('<b>', False),
+                    ('w', False),
+                    ('</b>', False),
+                    ('world', False),
+                    (None, True)])
+
+    def test_script(self):
+        self.check('Hello <script>document.write("<b>world</b>");</script>!',
+                   [('Hello ', False),
+                    ('<script>', True),
+                    ('document.write("<b>world</b>");', True),
+                    ('</script>', True),
+                    ('!', False),
+                    (None, True)])
+
+        self.check('Hello <SCRIPT>document.write("<b>world</b>");</SCRIPT>!',
+                   [('Hello ', False),
+                    ('<SCRIPT>', True),
+                    ('document.write("<b>world</b>");', True),
+                    ('</SCRIPT>', True),
+                    ('!', False),
+                    (None, True)])
+
+
 class HtmlTest(TestBase):
     """Test some simple html parsing."""
     def check(self, input):
