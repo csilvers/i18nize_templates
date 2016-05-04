@@ -789,6 +789,8 @@ class HtmlLexer(markupbase.ParserBase):
                 self.handle_tag(rawdata, i, entity_end, tagname, [])
             elif rawdata.startswith("<!--", i):
                 entity_end = self.parse_comment(i)      # in markupbase
+                if entity_end == -1:
+                    self.error("No end > found for comment")
                 # We *could* collect text like 'a<!-- b -->c', but...
                 self._call_callback(rawdata[i:entity_end],
                                     segment_separates_nltext=True)
@@ -798,6 +800,8 @@ class HtmlLexer(markupbase.ParserBase):
                                     segment_separates_nltext=True)
             elif rawdata.startswith("<!", i):
                 entity_end = self.parse_declaration(i)  # in markupbase
+                if entity_end == -1:
+                    self.error("No end > found for '<!' declaration")
                 self._call_callback(rawdata[i:entity_end],
                                     segment_separates_nltext=True)
             else:

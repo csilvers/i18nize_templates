@@ -2,6 +2,7 @@
 
 """Unitest for i18nize_templates.py."""
 
+import HTMLParser
 import sys
 import unittest
 
@@ -108,6 +109,10 @@ class HtmlTest(TestBase):
         actual = parser.parse(input)
         self.assertEqual(input, actual)
 
+    def assert_is_error(self, input):
+        with self.assertRaises(HTMLParser.HTMLParseError):
+            self.check(input)
+
     def test_non_existent_tag(self):
         self.check('this <is a tag>.')
 
@@ -120,6 +125,13 @@ class HtmlTest(TestBase):
             parser.error("test")
         except Exception, e:
             self.assertEqual("test, at line 1, column 1", "%s" % e)
+
+    def test_unfinished_entities(self):
+        self.assert_is_error('this is <a unfinished=tag')
+        self.assert_is_error('this is an unfinished </tag')
+        self.assert_is_error('this is <!-- an unfinished comment')
+        self.assert_is_error('this is <?unfinished')
+        self.assert_is_error('this is <!unfinished')
 
 
 class Jinja2Test(TestBase):
