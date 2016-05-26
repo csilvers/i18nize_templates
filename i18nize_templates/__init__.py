@@ -331,6 +331,7 @@ def _init():
         'youtube.player_embed',
         'log.date.strftime',
         'emails.tracking_image_url',
+        'templatetags.to_canonical_url'
         )
 
     mark_function_param_lacks_nltext(
