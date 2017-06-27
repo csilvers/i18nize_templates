@@ -47,7 +47,7 @@ except ImportError:
 setup(
     name='i18nize_templates',
     version='0.1',
-    url='http://github.com/csilvers/i18nize_templates',
+    url='https://github.com/csilvers/i18nize_templates',
     license='MIT',
     author='Craig Silverstein',
     author_email='csilvers+i18nize_templates@gmail.com',
